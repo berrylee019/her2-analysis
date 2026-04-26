@@ -2,6 +2,17 @@ import requests
 import pandas as pd
 import json
 
+# app.py 상단에 적용
+@st.cache_data
+def load_gdc_data(query):
+    # API 호출 로직
+    return data
+
+@st.cache_resource
+def load_3d_model(pdb_code):
+    # 단백질 모델 로딩 로직 (리소스 소모가 큼)
+    return model
+    
 def get_her2_mutations():
     # 1. API 엔드포인트 설정 (SSMs: Simple Somatic Mutations)
     ssm_methods_url = "https://api.gdc.cancer.gov/ssms"
