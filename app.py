@@ -85,10 +85,20 @@ if df is not None:
             c1, c2 = st.columns(2)
             c1.metric("결합 영향도", f"{icon} {status}")
             c2.metric("포켓과의 거리", f"{dist} residues")
-            
+
+            # [강조 로직] 755번인 경우 특별 안내 추가
+            if res_num == "755":
+                st.warning("🚨 [급소 포착] 755번은 약물 결합 동굴의 핵심 벽면입니다!")
+                st.markdown("---")
+                st.info("💡 **3D 뷰어 조작 팁:**\n1. 마우스 휠로 **동굴 안쪽**까지 줌인하세요.\n2. 755번은 **동굴 바닥의 오른쪽 벽면**에 위치합니다.")
+                
             pdb_path = get_pdb_file('3WZE')
             if pdb_path:
                 st_molstar(pdb_path, key='her2_viewer', height=400)
                 st.caption(f"📍 분석 지점: {selected_mut} (활성 부위 755번 기준)")
+                
+                # 뷰어 하단에 형광색 가이드바 표시
+                if res_num == "755":
+                    st.write("🟢 **형광색 가이드:** 뷰어 안쪽의 가장 깊은 골짜기를 확인하세요.")
 else:
     st.error("GDC API 연결 실패")
