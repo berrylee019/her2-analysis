@@ -11,8 +11,7 @@ st.set_page_config(page_title="HER2 Analysis Platform", page_icon="🧬", layout
 # 2. 데이터 로드 및 분석 함수 정의
 @st.cache_data
 def load_clinical_data():
-    """복잡한 GDC 컬럼명을 유연하게 탐색하여 HER2 데이터를 로드합니다."""
-    # 형님이 올려주신 파일명 우선 탐색
+    """모든 경로와 다양한 컬럼명을 자동으로 탐색하여 임상 데이터를 로드합니다."""
     paths = [
         'data/2026-04-26T13-44_export.csv',
         '2026-04-26T13-44_export.csv',
@@ -24,34 +23,39 @@ def load_clinical_data():
     if not target_path: return None
     
     try:
-        # 파일 형식 자동 판별
+        # 파일 형식 자동 판별 및 로드
         sep = '\t' if target_path.endswith('.tsv') else ','
-        df_cli = pd.read_csv(target_path, sep=sep)
+        df_cli = pd.read_csv(target_path, sep=sep, low_memory=False)
         
-        # [핵심] 컬럼명 유연 탐색 (패턴 매칭)
+        # [핵심] 그물망 컬럼 탐색
         cols = df_cli.columns.tolist()
         
-        # IHC: 'her2'와 'ihc'가 들어간 컬럼 혹은 그냥 'her2'가 들어간 컬럼 중 가장 적절한 것 선택
+        # IHC 컬럼: 'her2'와 'ihc'가 모두 들어간 컬럼을 찾되, 없으면 'her2_status' 포함 컬럼 탐색
         ihc_col = next((c for c in cols if 'her2' in c.lower() and 'ihc' in c.lower()), 
                        next((c for c in cols if 'her2_status' in c.lower() and 'fish' not in c.lower()), None))
         
-        # FISH: 'her2'와 'fish'가 동시에 들어간 컬럼
+        # FISH 컬럼: 'her2'와 'fish'가 모두 들어간 컬럼
         fish_col = next((c for c in cols if 'her2' in c.lower() and 'fish' in c.lower()), None)
         
-        # ID: 'submitter_id'가 포함된 컬럼 (cases.submitter_id 등)
-        id_col = next((c for c in cols if 'submitter_id' in c.lower()), None)
+        # ID 컬럼: 'submitter_id'가 포함된 컬럼 (보통 cases.submitter_id)
+        id_col = next((c for c in cols if 'submitter_id' in c.lower()), 
+                      next((c for c in cols if 'case_id' in c.lower()), None))
 
         def check_her2_low(row):
-            # 컬럼이 없을 경우를 대비한 안전장치
+            # 데이터를 문자열로 변환 후 공백 제거 및 대문자화
             ihc = str(row.get(ihc_col, '')).strip().upper() if ihc_col else ""
             fish = str(row.get(fish_col, '')).strip().upper() if fish_col else ""
             
-            # HER2-Low 판정 로직 (다양한 GDC 표기 대응)
-            if '1+' in ihc or ihc == '1.0' or ihc == '1': return True
-            if '2+' in ihc or ihc == '2.0' or ihc == '2':
-                # FISH가 음성이거나 정보가 없는 경우 Low로 분류
-                if any(x in fish for x in ['NEG', 'NON', 'NOT']): return True
-                if fish in ['', 'NAN', '--', "'--", 'UNKNOWN', 'PND']: return True
+            # HER2-Low 판정 (숫자형 1.0, 2.0 및 텍스트 1+, 2+ 모두 대응)
+            # 1) IHC 1인 경우
+            if any(x in ihc for x in ['1+', '1.0', '1']): return True
+            
+            # 2) IHC 2인 경우 (FISH 음성 확인)
+            if any(x in ihc for x in ['2+', '2.0', '2']):
+                # FISH가 음성이거나 정보가 없는 경우(GDC 특성상 미기입이 많음)를 Low로 판단
+                neg_keywords = ['NEG', 'NON', 'NOT', '0']
+                if any(k in fish for k in neg_keywords): return True
+                if fish in ['', 'NAN', '--', "'--", 'UNKNOWN', 'PND', 'NOT PERFORMED']: return True
             return False
 
         if ihc_col and id_col:
@@ -59,14 +63,14 @@ def load_clinical_data():
             df_cli['Match_ID'] = df_cli[id_col].astype(str).str.strip()
             return df_cli
         else:
-            # 매칭 실패 시 사이드바에 현재 찾은 최선의 컬럼명 노출 (디버깅용)
-            st.sidebar.warning(f"탐색된 컬럼명 -> IHC: {ihc_col}, ID: {id_col}")
+            # 실패 시 사이드바에 디버깅 정보 출력
+            st.sidebar.warning(f"⚠️ 컬럼 탐색 실패\n- 찾은 IHC컬럼: {ihc_col}\n- 찾은 ID컬럼: {id_col}")
             return None
     except Exception as e:
-        st.sidebar.error(f"파일 분석 오류: {e}")
+        st.sidebar.error(f"파일 처리 오류: {e}")
         return None
 
-# --- 변이 데이터 가져오기 (이전과 동일) ---
+# --- 이하 API 및 분석 로직 (기존과 동일하되 최적화) ---
 @st.cache_data
 def get_her2_mutations():
     ssm_url = "https://api.gdc.cancer.gov/ssms"
@@ -78,16 +82,12 @@ def get_her2_mutations():
     try:
         r = requests.get(ssm_url, params=params)
         hits = r.json()['data']['hits']
-        data = []
-        for h in hits:
-            aa = h.get('consequence', [{}])[0].get('transcript', {}).get('aa_change', 'N/A')
-            for occ in h.get('occurrence', []):
-                case_id = occ.get('case', {}).get('submitter_id')
-                data.append({"Case_ID": str(case_id).strip(), "AA_Change": aa})
+        data = [{"Case_ID": str(occ.get('case', {}).get('submitter_id')).strip(), 
+                 "AA_Change": h.get('consequence', [{}])[0].get('transcript', {}).get('aa_change', 'N/A')}
+                for h in hits for occ in h.get('occurrence', [])]
         return pd.DataFrame(data)
     except: return None
 
-# --- 에너지 분석 및 PDB 관련 함수 ---
 def estimate_binding_energy(res_num_str):
     try:
         res_int = int("".join(filter(str.isdigit, str(res_num_str))))
@@ -105,34 +105,31 @@ def get_pdb_file(pdb_id):
         with open(file_path, "w") as f: f.write(r.text)
     return file_path
 
-# 3. 메인 화면 구성
+# 3. 메인 UI
 st.title("🧬 HER2(ERBB2) Analysis Platform")
 
 st.sidebar.header("🔍 Filter Settings")
-her2_low_only = st.sidebar.checkbox("HER2-Low 환자군만 보기")
+her2_low_only = st.sidebar.checkbox("HER2-Low 환자군만 보기", value=False)
 
-with st.spinner('데이터 분석 중...'):
+with st.spinner('데이터를 불러오는 중...'):
     df_mut = get_her2_mutations()
     df_clinical = load_clinical_data()
 
-# 4. 데이터 통합 및 필터링
+# 4. 필터링 및 결과 출력
 if df_mut is not None:
     df_display = df_mut.copy()
     
     if her2_low_only:
         if df_clinical is not None:
-            low_patients = df_clinical[df_clinical['is_her2_low'] == True]
-            low_ids = low_patients['Match_ID'].unique()
-            st.sidebar.info(f"분류된 HER2-Low 환자: {len(low_ids)}명")
-            
-            # 실제 매칭 수행
+            low_ids = df_clinical[df_clinical['is_her2_low'] == True]['Match_ID'].unique()
+            st.sidebar.info(f"✅ HER2-Low 환자군: {len(low_ids)}명 확보")
             df_display = df_mut[df_mut['Case_ID'].isin(low_ids)]
             if not df_display.empty:
-                st.sidebar.success(f"매칭 성공: {len(df_display)}건")
+                st.sidebar.success(f"🎯 매칭된 변이 데이터: {len(df_display)}건")
             else:
-                st.sidebar.warning("ID 매칭 실패 (임상-변이 ID 불일치)")
+                st.sidebar.warning("매칭된 데이터가 없습니다. (ID 형식 확인 필요)")
         else:
-            st.sidebar.error("임상 데이터를 로드할 수 없습니다.")
+            st.sidebar.error("임상 데이터를 로드하지 못했습니다.")
 
     col1, col2 = st.columns([1, 1])
     with col1:
@@ -145,13 +142,13 @@ if df_mut is not None:
             st.warning("데이터가 없습니다.")
 
     with col2:
-        st.subheader("🔬 3D Structure Analysis")
+        st.subheader("🔬 3D Structure & Energy Analysis")
         if not df_display.empty:
             mats = [m for m in df_display['AA_Change'].unique() if m != 'N/A']
             selected_mut = st.selectbox("분석할 변이 선택:", mats)
             if selected_mut:
                 status, icon, dist = estimate_binding_energy(selected_mut)
-                st.metric("결합 영향도", f"{icon} {status}")
+                st.metric("Binding Impact", f"{icon} {status} (Dist: {dist})")
                 pdb_path = get_pdb_file('3WZE')
                 if pdb_path: st_molstar(pdb_path, height=400)
 else:
