@@ -5,6 +5,26 @@ import json
 import os
 from streamlit_molstar import st_molstar
 
+# app.py에 추가할 에너지 추정 로직 (예시)
+def estimate_binding_energy(res_num, drug_pocket_center=755):
+    """
+    변이 지점과 약물 결합 포켓 중심 사이의 거리를 기반으로 
+    결합 에너지의 변화 가능성을 추정합니다.
+    """
+    distance = abs(int(res_num) - drug_pocket_center)
+    
+    if distance < 5:
+        return "Critical (결합력에 직접적 영향 가능성 높음)"
+    elif distance < 15:
+        return "Moderate (간접적인 구조적 변화 가능성)"
+    else:
+        return "Low (결합 부위와 거리가 멂)"
+
+# UI 반영
+st.subheader("⚡ Drug Binding Energy Estimation")
+energy_impact = estimate_binding_energy(res_num)
+st.metric(label="변이의 약물 결합 영향도", value=energy_impact)
+
 # 1. 페이지 설정 및 스타일 최적화
 st.set_page_config(page_title="HER2 Analysis Platform", page_icon="🧬", layout="wide")
 
