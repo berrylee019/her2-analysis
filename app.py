@@ -11,27 +11,36 @@ st.set_page_config(page_title="HER2 Analysis Platform", page_icon="🧬", layout
 # 2. 데이터 로드 및 분석 함수 정의
 @st.cache_data
 def load_clinical_data():
-    """data/clinical.tsv 파일을 읽어 HER2-Low 환자군을 분류합니다."""
     file_path = 'data/clinical.tsv'
-    if not os.path.exists(file_path):
-        return None
+    if not os.path.exists(file_path): return None
+    
     try:
         df_cli = pd.read_csv(file_path, sep='\t')
-        # GDC의 'cases.' 접두사가 붙은 컬럼명 대응
-        ihc_col = next((c for c in df_cli.columns if 'her2_status_by_ihc' in c), None)
-        fish_col = next((c for c in df_cli.columns if 'her2_fish_status' in c), None)
+        
+        # [진단용] 실제 컬럼명과 상위 3개 데이터를 화면에 출력
+        st.write("🔍 **임상 데이터 실제 컬럼 목록:**", df_cli.columns.tolist())
+        st.write("📊 **데이터 상단 샘플:**", df_cli.head(3))
+        
+        # HER2 관련 단어가 포함된 모든 컬럼 찾기
+        ihc_col = next((c for c in df_cli.columns if 'her2' in c.lower() and 'ihc' in c.lower()), None)
+        fish_col = next((c for c in df_cli.columns if 'her2' in c.lower() and 'fish' in c.lower()), None)
+        
+        # 만약 위 조건으로 못 찾으면 'her2'가 들어간 모든 컬럼이라도 확보
+        if not ihc_col:
+            ihc_col = next((c for c in df_cli.columns if 'her2' in c.lower()), None)
 
         def check_her2_low(row):
-            ihc = str(row.get(ihc_col, '')).strip().upper() if ihc_col else ""
-            fish = str(row.get(fish_col, '')).strip().upper() if fish_col else ""
-            if ihc == '1+': return True
-            if ihc == '2+' and (fish == 'NEGATIVE' or fish == 'NON-AMPLIFIED'): return True
+            val = str(row.get(ihc_col, '')).strip().upper()
+            # 1+, 2+, Positive, Low 등 파일에 적힌 실제 값을 확인해야 합니다.
+            if val in ['1+', 'IHC 1+', '1']: return True
+            # FISH 데이터가 없는 경우를 대비해 IHC 2+만으로도 일단 True로 잡고 테스트
+            if val in ['2+', 'IHC 2+', '2']: return True 
             return False
 
         df_cli['is_her2_low'] = df_cli.apply(check_her2_low, axis=1)
         return df_cli
     except Exception as e:
-        st.error(f"임상 데이터 파싱 오류: {e}")
+        st.error(f"진단 중 오류 발생: {e}")
         return None
 
 def estimate_binding_energy(res_num_str, drug_pocket_center=755):
