@@ -62,7 +62,7 @@ def get_her2_mutations():
             {"op": "in", "content": {"field": "genes.symbol", "value": ["ERBB2"]}}
         ]
     }
-    params = {"filters": json.dumps(filters), "fields": "consequence.transcript.aa_change,occurrence.case.submitter_id", "format": "JSON", "size": "200"}
+    params = {"filters": json.dumps(filters), "fields": "consequence.transcript.aa_change,occurrence.case.submitter_id", "format": "JSON", "size": "2000"}
     try:
         r = requests.get(ssm_url, params=params)
         hits = r.json()['data']['hits']
