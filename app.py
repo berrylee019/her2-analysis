@@ -92,17 +92,26 @@ with st.spinner('데이터를 분석 중입니다...'):
     df_clinical = load_clinical_data()
 
 # 3. 데이터 통합 및 필터링 적용
+# 3. 데이터 통합 및 필터링 적용
 if df_mut is not None:
-    # 필터링 로직 가동
     if her2_low_only:
         if df_clinical is not None:
-            # Clinical 데이터에서 HER2-Low 환자의 ID 추출
-            # GDC 임상 데이터의 ID 컬럼명은 보통 'case_submitter_id'입니다.
-            low_ids = df_clinical[df_clinical['is_her2_low'] == True]['case_submitter_id'].unique()
-            df_display = df_mut[df_mut['Case_ID'].isin(low_ids)]
-            st.sidebar.success(f"HER2-Low 환자 {len(df_display)}명의 데이터 표시 중")
+            # [수정] ID 컬럼명을 유연하게 찾기 (GDC 표준 후보군들)
+            id_candidates = ['case_submitter_id', 'case_id', 'entity_submitter_id', 'submitter_id']
+            id_col = next((col for col in id_candidates if col in df_clinical.columns), None)
+
+            if id_col:
+                # HER2-Low 환자의 ID 추출
+                low_ids = df_clinical[df_clinical['is_her2_low'] == True][id_col].unique()
+                df_display = df_mut[df_mut['Case_ID'].isin(low_ids)]
+                st.sidebar.success(f"HER2-Low 환자 {len(df_display)}명의 데이터 표시 중")
+            else:
+                # ID 컬럼을 아예 못 찾은 경우 진단 정보 출력
+                st.sidebar.error("ID 컬럼을 찾을 수 없습니다.")
+                st.sidebar.write("파일 컬럼 목록:", df_clinical.columns.tolist()[:5]) # 상위 5개만 출력
+                df_display = df_mut
         else:
-            st.sidebar.error("임상 데이터 파일(clinical.tsv)을 찾을 수 없습니다.")
+            st.sidebar.error("clinical.tsv 파일을 로드하지 못했습니다.")
             df_display = df_mut
     else:
         df_display = df_mut
