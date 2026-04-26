@@ -134,3 +134,4 @@ if df_mut is not None:
                     st.caption(f"📍 분석 지점: {selected_mut} (활성 부위 755번 기준)")
 else:
     st.error("GDC API 연결 실패")
+st.write(df_clinical.columns.tolist())
