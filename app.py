@@ -1,6 +1,8 @@
 import requests
 import pandas as pd
 import json
+import streamlit as st
+from streamlit_molstar import st_molstar
 
 # app.py 상단에 적용
 @st.cache_data
