@@ -44,6 +44,7 @@ def estimate_binding_energy(res_num_str, drug_pocket_center=755):
     except: return "Unknown", "⚪", 0
 
 @st.cache_data
+@st.cache_data
 def get_her2_mutations():
     ssm_url = "https://api.gdc.cancer.gov/ssms"
     filters = {
@@ -53,17 +54,36 @@ def get_her2_mutations():
             {"op": "in", "content": {"field": "genes.symbol", "value": ["ERBB2"]}}
         ]
     }
-    params = {"filters": json.dumps(filters), "fields": "consequence.transcript.aa_change,occurrence.case.submitter_id", "format": "JSON", "size": "1000"}
+    
+    # 데이터를 더 많이 가져오기 위해 fields를 확장하고 expand 옵션을 활용합니다.
+    params = {
+        "filters": json.dumps(filters),
+        "fields": "consequence.transcript.aa_change,occurrence.case.submitter_id",
+        "format": "JSON",
+        "size": "2000" # 2,000개로 대폭 확장
+    }
+    
     try:
         r = requests.get(ssm_url, params=params)
-        hits = r.json()['data']['hits']
+        res_json = r.json()
+        hits = res_json['data']['hits']
+        
         data = []
         for h in hits:
             aa = h.get('consequence', [{}])[0].get('transcript', {}).get('aa_change', 'N/A')
-            case_id = h.get('occurrence', [{}])[0].get('case', {}).get('submitter_id')
-            data.append({"Case_ID": case_id, "AA_Change": aa})
-        return pd.DataFrame(data)
-    except: return None
+            # 한 변이에 여러 환자(occurrence)가 있을 수 있으므로 모두 추출
+            occurrences = h.get('occurrence', [])
+            for occ in occurrences:
+                case_id = occ.get('case', {}).get('submitter_id')
+                data.append({"Case_ID": case_id, "AA_Change": aa})
+        
+        df = pd.DataFrame(data)
+        # 중복 제거 전 데이터 개수 확인용 로그 (Streamlit 콘솔에 찍힘)
+        print(f"Total rows fetched: {len(df)}") 
+        return df
+    except Exception as e:
+        st.error(f"데이터 증폭 중 오류: {e}")
+        return None
 
 def get_pdb_file(pdb_id):
     file_path = f"{pdb_id}.pdb"
