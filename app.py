@@ -98,5 +98,51 @@ else:
 
 # 4. 3D 모델 로딩 (추후 구현을 위한 플레이스홀더)
 st.divider()
-st.subheader("🔬 3D Structure Analysis (Coming Soon)")
-st.info("선택한 변이에 따른 단백질 구조 변화를 시각화할 예정입니다.")
+st.subheader("🔬 3D Structure Analysis")
+st.info("선택한 변이에 따른 단백질 구조 변화를 시각화 합니다.")
+# ... (기존 변이 분석 코드 아래에 추가)
+
+if df_her2 is not None:
+    st.divider()
+    st.subheader("🔬 Mutation 3D Mapping")
+    
+    # 1. 분석된 변이 중 시각화할 항목 선택
+    mutation_list = top_mutations['Amino_Acid_Change'].tolist()
+    selected_mut = st.selectbox("구조를 확인할 변이를 선택하세요:", [m for m in mutation_list if m != 'N/A'])
+
+    if selected_mut:
+        # 2. 변이 번호 추출 (예: L755S -> 755)
+        try:
+            res_num = "".join(filter(str.isdigit, selected_mut))
+            wild_aa = selected_mut[0]
+            mut_aa = selected_mut[-1]
+            
+            st.info(f"선택된 변이: {wild_aa} (Wild-type) ➔ {res_num}번 위치 ➔ {mut_aa} (Mutant)")
+
+            # 3. 3D 시각화 (HER2 Kinase Domain 구조: 3WZE 사용)
+            # st_molstar는 PDB ID나 URL을 직접 받을 수 있습니다.
+            # '3WZE'는 HER2의 활성 상태 구조입니다.
+            
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st_molstar(
+                    '3WZE', 
+                    key='her2_viewer',
+                    height=500,
+                )
+            
+            with col2:
+                st.write("**분석 가이드**")
+                st.caption(f"""
+                - **PDB ID:** 3WZE
+                - **Target Residue:** {res_num}
+                - 이 부위가 약물(Lapatinib 등) 결합 포켓 근처인지 확인하십시오.
+                - {res_num}번 잔기의 부피 변화가 구조 안정성에 미치는 영향을 분석할 수 있습니다.
+                """)
+                
+        except Exception as e:
+            st.error(f"구조 매핑 중 오류가 발생했습니다: {e}")
+
+# 3D 구조와 약물 결합 이해를 돕기 위한 이미지
+#
