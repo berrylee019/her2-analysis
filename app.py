@@ -146,3 +146,4 @@ if df_mut is not None:
             st.info("분석할 변이 데이터가 없습니다.")
 else:
     st.error("GDC API 연결 실패")
+st.write(df_clinical.columns.tolist())
