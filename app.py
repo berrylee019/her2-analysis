@@ -4,22 +4,19 @@ import json
 import streamlit as st
 from streamlit_molstar import st_molstar
 
-# app.py 상단에 적용
-@st.cache_data
-def load_gdc_data(query):
-    # API 호출 로직
-    return data
+# 1. 페이지 설정 (가장 상단에 위치해야 함)
+st.set_page_config(page_title="HER2 Analysis Platform", page_icon="🧬")
 
-@st.cache_resource
-def load_3d_model(pdb_code):
-    # 단백질 모델 로딩 로직 (리소스 소모가 큼)
-    return model
-    
+st.title("🧬 HER2(ERBB2) Analysis Platform")
+st.markdown("TCGA-BRCA 데이터를 활용한 HER2 변이 분석 결과입니다.")
+
+# 2. 캐싱된 데이터 호출 함수
+@st.cache_data
 def get_her2_mutations():
-    # 1. API 엔드포인트 설정 (SSMs: Simple Somatic Mutations)
+    # API 엔드포인트 설정 (SSMs: Simple Somatic Mutations)
     ssm_methods_url = "https://api.gdc.cancer.gov/ssms"
 
-    # 2. 필터 설정: TCGA-BRCA 프로젝트이면서 유전자 심볼이 ERBB2인 것만
+    # 필터 설정: TCGA-BRCA 프로젝트이면서 유전자 심볼이 ERBB2인 것만
     filters = {
         "op": "and",
         "content": [
@@ -40,34 +37,34 @@ def get_her2_mutations():
         ]
     }
 
-    # 3. 가져올 필드 정의 (변이 종류, 아미노산 변화, 영향력 등)
     fields = [
         "genomic_dna_change",
         "mutation_subtype",
-        "consequence.transcript.aa_change", # 아미노산 변화 (예: L755S)
+        "consequence.transcript.aa_change",
         "consequence.transcript.consequence_type",
         "occurrence.case.submitter_id"
     ]
-    fields = ",".join(fields)
-
-    # 4. 파라미터 구성
+    
     params = {
         "filters": json.dumps(filters),
-        "fields": fields,
+        "fields": ",".join(fields),
         "format": "JSON",
-        "size": "100"  # 상위 100개 데이터
+        "size": "100"
     }
 
-    # 5. API 호출
-    response = requests.get(ssm_methods_url, params=params)
-    
-    if response.status_code == 200:
+    try:
+        response = requests.get(ssm_methods_url, params=params)
+        response.raise_for_status()
         data = response.json()['data']['hits']
         
-        # 데이터 정제 (리스트 형태로 변환)
         refined_data = []
         for hit in data:
-            aa_change = hit.get('consequence', [{}])[0].get('transcript', {}).get('aa_change', 'N/A')
+            # 안전하게 아미노산 변화 데이터 추출
+            consequences = hit.get('consequence', [])
+            aa_change = 'N/A'
+            if consequences:
+                aa_change = consequences[0].get('transcript', {}).get('aa_change', 'N/A')
+            
             refined_data.append({
                 "Case_ID": hit.get('occurrence', [{}])[0].get('case', {}).get('submitter_id'),
                 "DNA_Change": hit.get('genomic_dna_change'),
@@ -76,16 +73,30 @@ def get_her2_mutations():
             })
         
         return pd.DataFrame(refined_data)
-    else:
-        print(f"Error: {response.status_code}")
+    except Exception as e:
+        st.error(f"데이터를 가져오는 중 오류 발생: {e}")
         return None
 
-# 데이터 호출 및 확인
-df_her2 = get_her2_mutations()
+# 3. 메인 로직 실행
+with st.spinner('GDC API로부터 데이터를 불러오는 중...'):
+    df_her2 = get_her2_mutations()
 
 if df_her2 is not None:
-    # 중복 제거 및 빈도순 정렬
+    # 빈도 분석
     top_mutations = df_her2['AA_Change'].value_counts().reset_index()
     top_mutations.columns = ['Amino_Acid_Change', 'Frequency']
-    print("--- HER2(ERBB2) Top Mutations in TCGA-BRCA ---")
-    print(top_mutations.head(10))
+    
+    # 웹 화면 출력
+    st.subheader("📊 Top 10 Mutations in HER2 (TCGA-BRCA)")
+    st.dataframe(top_mutations.head(10), use_container_width=True)
+    
+    # 상세 데이터 확인
+    with st.expander("전체 원본 데이터 보기"):
+        st.write(df_her2)
+else:
+    st.warning("데이터를 불러올 수 없습니다. API 상태를 확인해주세요.")
+
+# 4. 3D 모델 로딩 (추후 구현을 위한 플레이스홀더)
+st.divider()
+st.subheader("🔬 3D Structure Analysis (Coming Soon)")
+st.info("선택한 변이에 따른 단백질 구조 변화를 시각화할 예정입니다.")
