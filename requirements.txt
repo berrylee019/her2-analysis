@@ -1,0 +1,7 @@
+streamlit
+pandas
+requests
+biopython  # 생물학 데이터 처리 필수
+py3Dmol    # 단백질 3D 시각화용
+st-molstar # 차세대 3D 뷰어 (선택)
+python-dotenv # .env 관리
