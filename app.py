@@ -89,18 +89,31 @@ if df is not None:
         st.subheader("📊 Mutation Frequency")
         top_mats = df['AA_Change'].value_counts().reset_index()
         top_mats.columns = ['Mutation', 'Count']
-        # 경고 해결: width='stretch' 적용
         st.dataframe(top_mats.head(10), width='stretch')
 
     with col2:
-        st.subheader("🔬 3D Structure Mapping")
-        selected_mut = st.selectbox("변이를 선택하세요:", top_mats['Mutation'].unique())
+        st.subheader("🔬 3D Structure & Energy Analysis")
+        # 1. 변이 선택
+        mutation_list = [m for m in top_mats['Mutation'].unique() if m != 'N/A']
+        selected_mut = st.selectbox("분석할 변이를 선택하세요:", mutation_list)
         
-        # PDB ID '3WZE' (HER2 Kinase domain)
-        pdb_path = get_pdb_file('3WZE')
-        
-        if pdb_path:
-            st_molstar(pdb_path, key='her2_viewer', height=400)
-            st.caption(f"Target: {selected_mut} on HER2 Structure (PDB: 3WZE)")
-else:
-    st.error("GDC API 연결에 실패했습니다.")
+        if selected_mut:
+            # 2. [중요] res_num 변수 정의 (숫자만 추출)
+            res_num = "".join(filter(str.isdigit, str(selected_mut)))
+            
+            if res_num:
+                # 3. 에너지 계산 함수 호출 (res_num이 정의된 후 호출!)
+                status, icon, dist = estimate_binding_energy(res_num)
+                
+                # 시각적 지표 출력
+                c1, c2 = st.columns(2)
+                c1.metric("결합 영향도", f"{icon} {status}")
+                c2.metric("포켓과의 거리", f"{dist} residues")
+                
+                # 4. 3D 매핑 시각화
+                pdb_path = get_pdb_file('3WZE')
+                if pdb_path:
+                    st_molstar(pdb_path, key='her2_viewer', height=400)
+                    st.caption(f"📍 현재 분석 중인 위치: {selected_mut} (포켓 중심 755번으로부터 {dist} 떨어짐)")
+            else:
+                st.warning("변이 위치 번호를 식별할 수 없습니다.")
