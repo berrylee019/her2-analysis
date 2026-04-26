@@ -8,7 +8,6 @@ from streamlit_molstar import st_molstar
 # 1. 페이지 설정 및 함수 정의
 st.set_page_config(page_title="HER2 Analysis Platform", page_icon="🧬", layout="wide")
 
-# [신규] 임상 데이터 로드 및 HER2-Low 분류 함수
 @st.cache_data
 def load_clinical_data():
     """data/clinical.tsv 파일을 읽어 HER2-Low 환자군을 분류합니다."""
@@ -20,13 +19,16 @@ def load_clinical_data():
         # TSV 파일 읽기
         df_cli = pd.read_csv(file_path, sep='\t')
         
-        # HER2-Low 정의 로직: IHC 1+ 또는 (IHC 2+ 이면서 FISH Negative)
+        # [핵심] HER2 관련 컬럼 자동 탐색 (cases. 표기법 대응)
+        ihc_col = next((c for c in df_cli.columns if 'her2_status_by_ihc' in c), None)
+        fish_col = next((c for c in df_cli.columns if 'her2_fish_status' in c), None)
+
         def check_her2_low(row):
-            # 컬럼명은 GDC 데이터 표준에 따라 'her2_status_by_ihc', 'her2_fish_status' 가정
-            # 데이터마다 다를 수 있으므로 .get()으로 안전하게 접근
-            ihc = str(row.get('her2_status_by_ihc', '')).strip().upper()
-            fish = str(row.get('her2_fish_status', '')).strip().upper()
+            # IHC 및 FISH 값 추출 및 정규화
+            ihc = str(row.get(ihc_col, '')).strip().upper() if ihc_col else ""
+            fish = str(row.get(fish_col, '')).strip().upper() if fish_col else ""
             
+            # HER2-Low 정의: IHC 1+ 또는 (IHC 2+ 이면서 FISH Negative)
             if ihc == '1+':
                 return True
             if ihc == '2+' and (fish == 'NEGATIVE' or fish == 'NON-AMPLIFIED'):
@@ -83,7 +85,6 @@ def get_pdb_file(pdb_id):
 # 2. 메인 화면 구성
 st.title("🧬 HER2(ERBB2) Analysis Platform")
 
-# 사이드바 필터 설정
 st.sidebar.header("🔍 Filter Settings")
 her2_low_only = st.sidebar.checkbox("HER2-Low 환자군만 보기")
 
@@ -92,29 +93,24 @@ with st.spinner('데이터를 분석 중입니다...'):
     df_clinical = load_clinical_data()
 
 # 3. 데이터 통합 및 필터링 적용
-# 3. 데이터 통합 및 필터링 적용
 if df_mut is not None:
+    df_display = df_mut.copy()
+    
     if her2_low_only:
         if df_clinical is not None:
-            # [수정] ID 컬럼명을 유연하게 찾기 (GDC 표준 후보군들)
-            id_candidates = ['case_submitter_id', 'case_id', 'entity_submitter_id', 'submitter_id']
-            id_col = next((col for col in id_candidates if col in df_clinical.columns), None)
+            # [수정] 확인된 'cases.case_id' 컬럼을 매칭 포인트로 사용
+            id_col = 'cases.case_id' if 'cases.case_id' in df_clinical.columns else \
+                     next((col for col in ['case_submitter_id', 'case_id'] if col in df_clinical.columns), None)
 
             if id_col:
-                # HER2-Low 환자의 ID 추출
                 low_ids = df_clinical[df_clinical['is_her2_low'] == True][id_col].unique()
+                # Mutation 데이터의 Case_ID와 Clinical 데이터의 ID 매칭
                 df_display = df_mut[df_mut['Case_ID'].isin(low_ids)]
                 st.sidebar.success(f"HER2-Low 환자 {len(df_display)}명의 데이터 표시 중")
             else:
-                # ID 컬럼을 아예 못 찾은 경우 진단 정보 출력
-                st.sidebar.error("ID 컬럼을 찾을 수 없습니다.")
-                st.sidebar.write("파일 컬럼 목록:", df_clinical.columns.tolist()[:5]) # 상위 5개만 출력
-                df_display = df_mut
+                st.sidebar.error("ID 컬럼(cases.case_id)을 찾을 수 없습니다.")
         else:
             st.sidebar.error("clinical.tsv 파일을 로드하지 못했습니다.")
-            df_display = df_mut
-    else:
-        df_display = df_mut
 
     col1, col2 = st.columns([1, 1])
     
@@ -130,8 +126,6 @@ if df_mut is not None:
 
     with col2:
         st.subheader("🔬 3D Structure & Energy Analysis")
-        
-        # 데이터가 있을 때만 분석 진행
         if not top_mats.empty:
             mutation_options = [m for m in top_mats['Mutation'].unique() if m != 'N/A']
             selected_mut = st.selectbox("분석할 변이를 선택하세요:", mutation_options)
