@@ -104,23 +104,37 @@ with st.spinner('데이터를 분석 중입니다...'):
     df_clinical = load_clinical_data()
 
 # 4. 데이터 통합 및 필터링 적용
+# 4. 데이터 통합 및 필터링 적용 부분 수정
 if df_mut is not None:
     df_display = df_mut.copy()
     
     if her2_low_only:
         if df_clinical is not None:
-            # 형님이 확인해주신 'cases.case_id' 컬럼 사용
+            # ID 컬럼 확인 (cases.case_id를 우선적으로 확인)
             id_col = 'cases.case_id' if 'cases.case_id' in df_clinical.columns else \
                      next((col for col in ['case_submitter_id', 'case_id'] if col in df_clinical.columns), None)
 
             if id_col:
-                low_ids = df_clinical[df_clinical['is_her2_low'] == True][id_col].unique()
+                # [진단 코드 추가] 실제 HER2-Low로 분류된 환자가 있는지 확인
+                low_patients = df_clinical[df_clinical['is_her2_low'] == True]
+                low_ids = low_patients[id_col].unique()
+                
+                # 사이드바에 진단 정보 출력
+                st.sidebar.info(f"임상 데이터 내 HER2-Low 환자수: {len(low_ids)}명")
+                if len(low_ids) > 0:
+                    st.sidebar.write("임상 ID 샘플:", list(low_ids)[:3])
+                    st.sidebar.write("변이 ID 샘플:", df_mut['Case_ID'].unique()[:3].tolist())
+
                 df_display = df_mut[df_mut['Case_ID'].isin(low_ids)]
-                st.sidebar.success(f"HER2-Low 환자 {len(df_display)}명 필터링 완료")
+                
+                if len(df_display) > 0:
+                    st.sidebar.success(f"매칭 성공: {len(df_display)}명의 변이 데이터 표시")
+                else:
+                    st.sidebar.warning("ID 형식이 일치하지 않아 매칭된 데이터가 없습니다.")
             else:
                 st.sidebar.error("ID 컬럼을 찾을 수 없습니다.")
         else:
-            st.sidebar.error("clinical.tsv 파일을 찾을 수 없습니다.")
+            st.sidebar.error("clinical.tsv 파일을 로드하지 못했습니다.")
 
     col1, col2 = st.columns([1, 1])
     
