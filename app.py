@@ -71,42 +71,24 @@ if df is not None:
 
     with col2:
         st.subheader("🔬 3D Structure & Energy Analysis")
+        # [해결포인트] 사용자가 선택한 후에만 res_num이 정의되도록 로직 구성
         selected_mut = st.selectbox("분석할 변이를 선택하세요:", [m for m in top_mats['Mutation'].unique() if m != 'N/A'])
         
         if selected_mut:
+            # 1. 여기서 res_num을 추출합니다.
             res_num = "".join(filter(str.isdigit, str(selected_mut)))
+            
+            # 2. 추출된 번호로 에너지 계산 함수 호출
             status, icon, dist = estimate_binding_energy(res_num)
             
-            # 상단 전광판
+            # 3. 결과 출력
             c1, c2 = st.columns(2)
             c1.metric("결합 영향도", f"{icon} {status}")
             c2.metric("포켓과의 거리", f"{dist} residues")
             
-            # [강력 가이드 로직] 755번일 때만 나타나는 비밀 병기
-            if res_num == "755":
-                st.error("🚨 [TARGET LOCATED] 755번 변이 지점 정밀 분석 중")
-                
-                # 3D 뷰어와 가이드 이미지를 나란히 배치
-                v_col1, v_col2 = st.columns([2, 1])
-                
-                with v_col1:
-                    pdb_path = get_pdb_file('3WZE')
-                    if pdb_path:
-                        st_molstar(pdb_path, key='her2_viewer', height=400)
-                
-                with v_col2:
-                    st.write("📍 **위치 가이드**")
-                    # 형광색으로 표시된 참고 이미지를 띄워 형님의 눈을 도와드립니다.
-                    # (이미지가 없다면 아래 안내 텍스트가 형광색 효과를 대신합니다)
-                    st.markdown("""
-                    <div style="background-color: #ccff00; padding: 10px; border-radius: 5px; color: black; font-weight: bold; text-align: center;">
-                    💡 3D 화면을 돌려<br>가장 깊은 구멍 안쪽<br>바닥을 보세요!
-                    </div>
-                    """, unsafe_allow_html=True)
-                    st.info("755번은 약물이 앉는 '방석'의 정중앙입니다.")
-            
-            else:
-                # 일반 변이일 때는 기존대로 3D만 출력
-                pdb_path = get_pdb_file('3WZE')
-                if pdb_path:
-                    st_molstar(pdb_path, key='her2_viewer', height=400)
+            pdb_path = get_pdb_file('3WZE')
+            if pdb_path:
+                st_molstar(pdb_path, key='her2_viewer', height=400)
+                st.caption(f"📍 분석 지점: {selected_mut} (활성 부위 755번 기준)")
+else:
+    st.error("GDC API 연결 실패")
