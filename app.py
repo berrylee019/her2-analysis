@@ -5,42 +5,59 @@ import json
 import os
 from streamlit_molstar import st_molstar
 
-# 1. [중요] 페이지 설정은 반드시 모든 'st' 코드 중 가장 상단에 위치해야 합니다.
+# 1. 페이지 설정
 st.set_page_config(page_title="HER2 Analysis Platform", page_icon="🧬", layout="wide")
 
 # 2. 데이터 로드 및 분석 함수 정의
 @st.cache_data
 def load_clinical_data():
-    file_path = 'data/clinical.tsv'
-    if not os.path.exists(file_path): return None
+    """파일 형식을 자동 감지하고 HER2-Low 환자군을 정밀 분류합니다."""
+    # 파일 후보군 (TSV 또는 CSV)
+    base_path = 'data/clinical'
+    file_path = None
+    for ext in ['.csv', '.tsv']:
+        if os.path.exists(base_path + ext):
+            file_path = base_path + ext
+            break
+    
+    # 만약 위 경로에 없다면 현재 폴더의 export.csv 등도 확인 (형님의 환경에 맞춰 확장)
+    if not file_path and os.path.exists('data/2026-04-26T13-44_export.csv'):
+        file_path = 'data/2026-04-26T13-44_export.csv'
+
+    if not file_path:
+        return None
     
     try:
-        df_cli = pd.read_csv(file_path, sep='\t')
+        sep = '\t' if file_path.endswith('.tsv') else ','
+        df_cli = pd.read_csv(file_path, sep=sep)
         
-        # [진단용] 실제 컬럼명과 상위 3개 데이터를 화면에 출력
-        st.write("🔍 **임상 데이터 실제 컬럼 목록:**", df_cli.columns.tolist())
-        st.write("📊 **데이터 상단 샘플:**", df_cli.head(3))
-        
-        # HER2 관련 단어가 포함된 모든 컬럼 찾기
-        ihc_col = next((c for c in df_cli.columns if 'her2' in c.lower() and 'ihc' in c.lower()), None)
-        fish_col = next((c for c in df_cli.columns if 'her2' in c.lower() and 'fish' in c.lower()), None)
-        
-        # 만약 위 조건으로 못 찾으면 'her2'가 들어간 모든 컬럼이라도 확보
-        if not ihc_col:
-            ihc_col = next((c for c in df_cli.columns if 'her2' in c.lower()), None)
+        # [핵심] HER2 관련 컬럼 및 ID 컬럼 자동 탐색
+        ihc_col = next((c for c in df_cli.columns if 'her2_status_by_ihc' in c.lower()), None)
+        fish_col = next((c for c in df_cli.columns if 'her2_fish_status' in c.lower()), None)
+        id_col = next((c for c in df_cli.columns if 'cases.submitter_id' in c.lower()), 
+                      next((c for c in df_cli.columns if 'submitter_id' in c.lower()), None))
 
         def check_her2_low(row):
-            val = str(row.get(ihc_col, '')).strip().upper()
-            # 1+, 2+, Positive, Low 등 파일에 적힌 실제 값을 확인해야 합니다.
-            if val in ['1+', 'IHC 1+', '1']: return True
-            # FISH 데이터가 없는 경우를 대비해 IHC 2+만으로도 일단 True로 잡고 테스트
-            if val in ['2+', 'IHC 2+', '2']: return True 
+            ihc = str(row.get(ihc_col, '')).strip().upper() if ihc_col else ""
+            fish = str(row.get(fish_col, '')).strip().upper() if fish_col else ""
+            
+            # HER2-Low 정의: IHC 1+ 또는 (IHC 2+ 이면서 FISH Negative/Non-amplified)
+            if '1+' in ihc: return True
+            if '2+' in ihc:
+                if any(x in fish for x in ['NEGATIVE', 'NON-AMPLIFIED', 'NOT AMPLIFIED']):
+                    return True
             return False
 
-        df_cli['is_her2_low'] = df_cli.apply(check_her2_low, axis=1)
-        return df_cli
+        if ihc_col and id_col:
+            df_cli['is_her2_low'] = df_cli.apply(check_her2_low, axis=1)
+            # 매칭을 위해 ID 컬럼 정리
+            df_cli['Match_ID'] = df_cli[id_col].astype(str).str.strip()
+            return df_cli
+        else:
+            st.error(f"필수 컬럼을 찾을 수 없습니다. (IHC: {ihc_col}, ID: {id_col})")
+            return None
     except Exception as e:
-        st.error(f"진단 중 오류 발생: {e}")
+        st.error(f"임상 데이터 로딩 중 오류: {e}")
         return None
 
 def estimate_binding_energy(res_num_str, drug_pocket_center=755):
@@ -53,7 +70,6 @@ def estimate_binding_energy(res_num_str, drug_pocket_center=755):
     except: return "Unknown", "⚪", 0
 
 @st.cache_data
-@st.cache_data
 def get_her2_mutations():
     ssm_url = "https://api.gdc.cancer.gov/ssms"
     filters = {
@@ -63,36 +79,24 @@ def get_her2_mutations():
             {"op": "in", "content": {"field": "genes.symbol", "value": ["ERBB2"]}}
         ]
     }
-    
-    # 데이터를 더 많이 가져오기 위해 fields를 확장하고 expand 옵션을 활용합니다.
     params = {
         "filters": json.dumps(filters),
         "fields": "consequence.transcript.aa_change,occurrence.case.submitter_id",
         "format": "JSON",
-        "size": "2000" # 2,000개로 대폭 확장
+        "size": "1000"
     }
-    
     try:
         r = requests.get(ssm_url, params=params)
-        res_json = r.json()
-        hits = res_json['data']['hits']
-        
+        hits = r.json()['data']['hits']
         data = []
         for h in hits:
             aa = h.get('consequence', [{}])[0].get('transcript', {}).get('aa_change', 'N/A')
-            # 한 변이에 여러 환자(occurrence)가 있을 수 있으므로 모두 추출
             occurrences = h.get('occurrence', [])
             for occ in occurrences:
                 case_id = occ.get('case', {}).get('submitter_id')
-                data.append({"Case_ID": case_id, "AA_Change": aa})
-        
-        df = pd.DataFrame(data)
-        # 중복 제거 전 데이터 개수 확인용 로그 (Streamlit 콘솔에 찍힘)
-        print(f"Total rows fetched: {len(df)}") 
-        return df
-    except Exception as e:
-        st.error(f"데이터 증폭 중 오류: {e}")
-        return None
+                data.append({"Case_ID": str(case_id).strip(), "AA_Change": aa})
+        return pd.DataFrame(data)
+    except: return None
 
 def get_pdb_file(pdb_id):
     file_path = f"{pdb_id}.pdb"
@@ -112,38 +116,28 @@ with st.spinner('데이터를 분석 중입니다...'):
     df_mut = get_her2_mutations()
     df_clinical = load_clinical_data()
 
-# 4. 데이터 통합 및 필터링 적용
-# 4. 데이터 통합 및 필터링 적용 부분 수정
+# 4. 데이터 통합 및 필터링
 if df_mut is not None:
     df_display = df_mut.copy()
     
     if her2_low_only:
         if df_clinical is not None:
-            # ID 컬럼 확인 (cases.case_id를 우선적으로 확인)
-            id_col = 'cases.case_id' if 'cases.case_id' in df_clinical.columns else \
-                     next((col for col in ['case_submitter_id', 'case_id'] if col in df_clinical.columns), None)
-
-            if id_col:
-                # [진단 코드 추가] 실제 HER2-Low로 분류된 환자가 있는지 확인
-                low_patients = df_clinical[df_clinical['is_her2_low'] == True]
-                low_ids = low_patients[id_col].unique()
-                
-                # 사이드바에 진단 정보 출력
-                st.sidebar.info(f"임상 데이터 내 HER2-Low 환자수: {len(low_ids)}명")
-                if len(low_ids) > 0:
-                    st.sidebar.write("임상 ID 샘플:", list(low_ids)[:3])
-                    st.sidebar.write("변이 ID 샘플:", df_mut['Case_ID'].unique()[:3].tolist())
-
-                df_display = df_mut[df_mut['Case_ID'].isin(low_ids)]
-                
-                if len(df_display) > 0:
-                    st.sidebar.success(f"매칭 성공: {len(df_display)}명의 변이 데이터 표시")
-                else:
-                    st.sidebar.warning("ID 형식이 일치하지 않아 매칭된 데이터가 없습니다.")
+            # HER2-Low 환자 ID 추출
+            low_patients = df_clinical[df_clinical['is_her2_low'] == True]
+            low_ids = low_patients['Match_ID'].unique()
+            
+            # 사이드바 진단 정보
+            st.sidebar.info(f"분류된 HER2-Low 환자: {len(low_ids)}명")
+            
+            # ID 매칭 (변이 데이터의 Case_ID와 임상 데이터의 Match_ID)
+            df_display = df_mut[df_mut['Case_ID'].isin(low_ids)]
+            
+            if not df_display.empty:
+                st.sidebar.success(f"매칭된 변이 데이터: {len(df_display)}건")
             else:
-                st.sidebar.error("ID 컬럼을 찾을 수 없습니다.")
+                st.sidebar.warning("매칭된 데이터가 없습니다. ID 형식을 확인하세요.")
         else:
-            st.sidebar.error("clinical.tsv 파일을 로드하지 못했습니다.")
+            st.sidebar.error("임상 데이터를 로드할 수 없습니다.")
 
     col1, col2 = st.columns([1, 1])
     
@@ -154,7 +148,7 @@ if df_mut is not None:
             top_mats.columns = ['Mutation', 'Count']
             st.dataframe(top_mats.head(10), use_container_width=True)
         else:
-            st.warning("데이터가 없습니다.")
+            st.warning("표시할 데이터가 없습니다.")
             top_mats = pd.DataFrame(columns=['Mutation', 'Count'])
 
     with col2:
@@ -177,4 +171,3 @@ if df_mut is not None:
                     st.caption(f"📍 분석 지점: {selected_mut} (활성 부위 755번 기준)")
 else:
     st.error("GDC API 연결 실패")
-st.write(df_clinical.columns.tolist())
