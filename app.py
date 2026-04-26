@@ -5,47 +5,20 @@ import json
 import os
 from streamlit_molstar import st_molstar
 
-# app.py에 추가할 에너지 추정 로직 (예시)
-def estimate_binding_energy(res_num, drug_pocket_center=755):
-    """
-    변이 지점과 약물 결합 포켓 중심 사이의 거리를 기반으로 
-    결합 에너지의 변화 가능성을 추정합니다.
-    """
-    distance = abs(int(res_num) - drug_pocket_center)
-    
-    if distance < 5:
-        return "Critical (결합력에 직접적 영향 가능성 높음)"
-    elif distance < 15:
-        return "Moderate (간접적인 구조적 변화 가능성)"
-    else:
-        return "Low (결합 부위와 거리가 멂)"
-
-# UI 반영
-st.subheader("⚡ Drug Binding Energy Estimation")
-energy_impact = estimate_binding_energy(res_num)
-st.metric(label="변이의 약물 결합 영향도", value=energy_impact)
-
-# 1. 페이지 설정 및 스타일 최적화
+# 1. 페이지 설정 및 함수 정의 (가장 먼저 정의되어야 함)
 st.set_page_config(page_title="HER2 Analysis Platform", page_icon="🧬", layout="wide")
 
-st.title("🧬 HER2(ERBB2) Analysis Platform")
-st.markdown("TCGA-BRCA 데이터를 활용한 HER2 변이 분석 및 3D 매핑 결과입니다.")
+def estimate_binding_energy(res_num_str, drug_pocket_center=755):
+    """변이 지점과 약물 결합 포켓 중심 사이의 거리를 계산"""
+    try:
+        res_int = int("".join(filter(str.isdigit, str(res_num_str))))
+        distance = abs(res_int - drug_pocket_center)
+        if distance < 15: return "Critical", "🔴", distance
+        elif distance < 30: return "Moderate", "🟡", distance
+        else: return "Low", "🟢", distance
+    except:
+        return "Unknown", "⚪", 0
 
-# 2. PDB 파일 다운로드 함수 (파일 없음 에러 방지)
-def get_pdb_file(pdb_id):
-    file_path = f"{pdb_id}.pdb"
-    if not os.path.exists(file_path):
-        url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
-        response = requests.get(url)
-        if response.status_code == 200:
-            with open(file_path, "w") as f:
-                f.write(response.text)
-        else:
-            st.error(f"PDB 파일을 다운로드할 수 없습니다: {pdb_id}")
-            return None
-    return file_path
-
-# 3. 데이터 로드 및 분석 함수
 @st.cache_data
 def get_her2_mutations():
     ssm_url = "https://api.gdc.cancer.gov/ssms"
@@ -56,29 +29,34 @@ def get_her2_mutations():
             {"op": "in", "content": {"field": "genes.symbol", "value": ["ERBB2"]}}
         ]
     }
-    params = {
-        "filters": json.dumps(filters),
-        "fields": "genomic_dna_change,mutation_subtype,consequence.transcript.aa_change,occurrence.case.submitter_id",
-        "format": "JSON",
-        "size": "100"
-    }
+    params = {"filters": json.dumps(filters), "fields": "genomic_dna_change,consequence.transcript.aa_change,occurrence.case.submitter_id", "format": "JSON", "size": "100"}
     try:
         r = requests.get(ssm_url, params=params)
-        r.raise_for_status()
         hits = r.json()['data']['hits']
         data = []
         for h in hits:
-            consq = h.get('consequence', [{}])[0].get('transcript', {})
-            data.append({
-                "Case_ID": h.get('occurrence', [{}])[0].get('case', {}).get('submitter_id'),
-                "AA_Change": consq.get('aa_change', 'N/A'),
-                "Type": h.get('mutation_subtype')
-            })
+            aa = h.get('consequence', [{}])[0].get('transcript', {}).get('aa_change', 'N/A')
+            data.append({"Case_ID": h.get('occurrence', [{}])[0].get('case', {}).get('submitter_id'), "AA_Change": aa})
         return pd.DataFrame(data)
-    except:
-        return None
+    except: return None
 
-# 4. 메인 실행 로직
+def get_pdb_file(pdb_id):
+    file_path = f"{pdb_id}.pdb"
+    if not os.path.exists(file_path):
+        url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
+        r = requests.get(url)
+        with open(file_path, "w") as f: f.write(r.text)
+    return file_path
+
+# 2. 메인 화면 구성
+st.title("🧬 HER2(ERBB2) Analysis Platform")
+
+# [다음 단계 예고] HER2-Low 필터 인터페이스 (기능은 임상 데이터 연결 후 활성화)
+st.sidebar.header("Filter Settings")
+her2_low_only = st.sidebar.checkbox("HER2-Low 환자군만 보기 (Beta)")
+if her2_low_only:
+    st.sidebar.info("임상 데이터(IHC/FISH) 연동 작업 중입니다.")
+
 with st.spinner('데이터를 분석 중입니다...'):
     df = get_her2_mutations()
 
@@ -93,27 +71,24 @@ if df is not None:
 
     with col2:
         st.subheader("🔬 3D Structure & Energy Analysis")
-        # 1. 변이 선택
-        mutation_list = [m for m in top_mats['Mutation'].unique() if m != 'N/A']
-        selected_mut = st.selectbox("분석할 변이를 선택하세요:", mutation_list)
+        # [해결포인트] 사용자가 선택한 후에만 res_num이 정의되도록 로직 구성
+        selected_mut = st.selectbox("분석할 변이를 선택하세요:", [m for m in top_mats['Mutation'].unique() if m != 'N/A'])
         
         if selected_mut:
-            # 2. [중요] res_num 변수 정의 (숫자만 추출)
+            # 1. 여기서 res_num을 추출합니다.
             res_num = "".join(filter(str.isdigit, str(selected_mut)))
             
-            if res_num:
-                # 3. 에너지 계산 함수 호출 (res_num이 정의된 후 호출!)
-                status, icon, dist = estimate_binding_energy(res_num)
-                
-                # 시각적 지표 출력
-                c1, c2 = st.columns(2)
-                c1.metric("결합 영향도", f"{icon} {status}")
-                c2.metric("포켓과의 거리", f"{dist} residues")
-                
-                # 4. 3D 매핑 시각화
-                pdb_path = get_pdb_file('3WZE')
-                if pdb_path:
-                    st_molstar(pdb_path, key='her2_viewer', height=400)
-                    st.caption(f"📍 현재 분석 중인 위치: {selected_mut} (포켓 중심 755번으로부터 {dist} 떨어짐)")
-            else:
-                st.warning("변이 위치 번호를 식별할 수 없습니다.")
+            # 2. 추출된 번호로 에너지 계산 함수 호출
+            status, icon, dist = estimate_binding_energy(res_num)
+            
+            # 3. 결과 출력
+            c1, c2 = st.columns(2)
+            c1.metric("결합 영향도", f"{icon} {status}")
+            c2.metric("포켓과의 거리", f"{dist} residues")
+            
+            pdb_path = get_pdb_file('3WZE')
+            if pdb_path:
+                st_molstar(pdb_path, key='her2_viewer', height=400)
+                st.caption(f"📍 분석 지점: {selected_mut} (활성 부위 755번 기준)")
+else:
+    st.error("GDC API 연결 실패")
